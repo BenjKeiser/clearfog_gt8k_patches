@@ -1,0 +1,63 @@
+diff --git a/arch/arm/dts/armada-8040-clearfog-gt-8k.dts b/arch/arm/dts/armada-8040-clearfog-gt-8k.dts
+index 79ee871c5a..eb6a61a14c 100644
+--- a/arch/arm/dts/armada-8040-clearfog-gt-8k.dts
++++ b/arch/arm/dts/armada-8040-clearfog-gt-8k.dts
+@@ -99,11 +99,16 @@
+ 		     0    0    0    0    0    0    0xe  0xe  0xe  0xe
+ 		     0xe  0xe  0 >;
+ 
+-	cp0_pcie_reset_pins: cp0-pcie-reset-pins {
++	cp0_pcie0_reset_pins: cp0-pcie0-reset-pins {
+ 		marvell,pins = < 32 >;
+ 		marvell,function = <0>;
+ 	};
+ 
++	cp1_pcie0_reset_pins: cp1-pcie0-reset-pins {
++		marvell,pins = < 33 >;
++		marvell,function = <0>;
++	};
++
+ 	cp0_xhci_vbus_pins: cp0-xhci-vbus-pins {
+ 		marvell,pins = < 47 >;
+ 		marvell,function = <0>;
+@@ -126,7 +131,7 @@
+ &cp0_pcie0 {
+ 	num-lanes = <1>;
+ 	pinctrl-names = "default";
+-	pinctrl-0 = <&cp0_pcie_reset_pins>;
++	pinctrl-0 = <&cp0_pcie0_reset_pins>;
+ 	marvell,reset-gpio = <&cp0_gpio1 0 GPIO_ACTIVE_LOW>;
+ 	status = "okay";
+ };
+@@ -190,7 +195,11 @@
+         phy-mode = "sfi";
+ };
+ 
+-&cp1_sata0 {
++&cp1_pcie0 {
++	num-lanes = <1>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&cp1_pcie0_reset_pins>;
++	marvell,reset-gpio = <&cp0_gpio1 1 GPIO_ACTIVE_LOW>;
+ 	status = "okay";
+ };
+ 
+@@ -264,7 +273,7 @@
+ &cp1_comphy {
+ 	/*
+ 	 * CP1 Serdes Configuration:
+-	 * Lane 0: SATA 1 (RX swapped). Can be PCIe0
++	 * Lane 0: PCIe0 (x1)
+ 	 * Lane 1: Not used
+ 	 * Lane 2: USB HOST 0
+ 	 * Lane 3: SGMII1 - Connected to 1512 port
+@@ -272,8 +281,7 @@
+ 	 * Lane 5: SGMII2 - Connected to Topaz switch
+ 	 */
+ 	phy0 {
+-		phy-type = <COMPHY_TYPE_SATA1>;
+-		phy-invert = <COMPHY_POLARITY_RXD_INVERT>;
++		phy-type = <COMPHY_TYPE_PEX0>;
+ 	};
+ 	phy1 {
+ 		phy-type = <COMPHY_TYPE_UNCONNECTED>;

@@ -1,0 +1,390 @@
+diff --git a/plat/marvell/a8k/a80x0_cfgt/board/dram_port.c b/plat/marvell/a8k/a80x0_cfgt/board/dram_port.c
+new file mode 100644
+index 00000000..4be98f7b
+--- /dev/null
++++ b/plat/marvell/a8k/a80x0_cfgt/board/dram_port.c
+@@ -0,0 +1,129 @@
++/*
++ * Copyright (C) 2018 Marvell International Ltd.
++ *
++ * SPDX-License-Identifier:     BSD-3-Clause
++ * https://spdx.org/licenses
++ */
++
++#include <arch_helpers.h>
++#include <a8k_i2c.h>
++#include <debug.h>
++#include <mmio.h>
++#include <mv_ddr_if.h>
++#include <mvebu_def.h>
++#include <plat_marvell.h>
++
++#define MVEBU_CP_MPP_CTRL37_OFFS		20
++#define MVEBU_CP_MPP_CTRL38_OFFS		24
++#define MVEBU_CP_MPP_CTRL37_I2C0_SCK_ENA	0x2
++#define MVEBU_CP_MPP_CTRL38_I2C0_SDA_ENA	0x2
++
++#define MVEBU_MPP_CTRL_MASK			0xf
++
++/*
++ * This struct provides the DRAM training code with
++ * the appropriate board DRAM configuration
++ */
++static struct mv_ddr_topology_map board_topology_map = {
++	/* Board with 1CS 8Gb x4 devices of Micron 2400T */
++	DEBUG_LEVEL_ERROR,
++	0x1, /* active interfaces */
++	/* cs_mask, mirror, dqs_swap, ck_swap X subphys */
++	{ { { {0x1, 0x0, 0, 0},	/* FIXME: change the cs mask for all 64 bit */
++	      {0x1, 0x0, 0, 0},
++	      {0x1, 0x0, 0, 0},
++	      {0x1, 0x0, 0, 0},
++	      {0x1, 0x0, 0, 0},
++	      {0x1, 0x0, 0, 0},
++	      {0x1, 0x0, 0, 0},
++	      {0x1, 0x0, 0, 0},
++	      {0x1, 0x0, 0, 0} },
++	   /* TODO: double check if the speed bin is 2400T */
++	   SPEED_BIN_DDR_2400T,		/* speed_bin */
++	   MV_DDR_DEV_WIDTH_8BIT,	/* sdram device width */
++	   MV_DDR_DIE_CAP_8GBIT,	/* die capacity */
++	   MV_DDR_FREQ_SAR,		/* frequency */
++	   0, 0,			/* cas_l, cas_wl */
++	   MV_DDR_TEMP_LOW} },		/* temperature */
++	   MV_DDR_64BIT_BUS_MASK,	/* subphys mask */
++	   MV_DDR_CFG_SPD,		/* ddr configuration data source */
++	{ {0} },			/* raw spd data */
++	{0},				/* timing parameters */
++	{	/* electrical configuration */
++		{	/* memory electrical configuration */
++			MV_DDR_RTT_NOM_PARK_RZQ_DISABLE,	/* rtt_nom */
++			{
++				MV_DDR_RTT_NOM_PARK_RZQ_DIV4, /* rtt_park 1cs */
++				MV_DDR_RTT_NOM_PARK_RZQ_DIV1  /* rtt_park 2cs */
++			},
++			{
++				MV_DDR_RTT_WR_DYN_ODT_OFF,	/* rtt_wr 1cs */
++				MV_DDR_RTT_WR_RZQ_DIV2		/* rtt_wr 2cs */
++			},
++			MV_DDR_DIC_RZQ_DIV7	/* dic */
++		},
++		{	/* phy electrical configuration */
++			MV_DDR_OHM_30,	/* data_drv_p */
++			MV_DDR_OHM_30,	/* data_drv_n */
++			MV_DDR_OHM_30,	/* ctrl_drv_p */
++			MV_DDR_OHM_30,	/* ctrl_drv_n */
++			{
++				MV_DDR_OHM_60,	/* odt_p 1cs */
++				MV_DDR_OHM_120	/* odt_p 2cs */
++			},
++			{
++				MV_DDR_OHM_60,	/* odt_n 1cs */
++				MV_DDR_OHM_120	/* odt_n 2cs */
++			},
++		},
++		{	/* mac electrical configuration */
++			MV_DDR_ODT_CFG_NORMAL,		/* odtcfg_pattern */
++			MV_DDR_ODT_CFG_ALWAYS_ON,	/* odtcfg_write */
++			MV_DDR_ODT_CFG_NORMAL,		/* odtcfg_read */
++		},
++	}
++};
++
++struct mv_ddr_topology_map *mv_ddr_topology_map_get(void)
++{
++	/* Return the board topology as defined in the board code */
++	return &board_topology_map;
++}
++
++static void mpp_config(void)
++{
++	uint32_t val;
++	uintptr_t reg = MVEBU_CP_MPP_REGS(0, 4);
++
++	/* configure CP0 MPP 37 and 38 to i2c */
++	val = mmio_read_32(reg);
++	val &= ~((MVEBU_MPP_CTRL_MASK << MVEBU_CP_MPP_CTRL37_OFFS) |
++		(MVEBU_MPP_CTRL_MASK << MVEBU_CP_MPP_CTRL38_OFFS));
++	val |= (MVEBU_CP_MPP_CTRL37_I2C0_SCK_ENA << MVEBU_CP_MPP_CTRL37_OFFS) |
++		(MVEBU_CP_MPP_CTRL38_I2C0_SDA_ENA << MVEBU_CP_MPP_CTRL38_OFFS);
++	mmio_write_32(reg, val);
++}
++
++/*
++ * This function may modify the default DRAM parameters
++ * based on information received from SPD or bootloader
++ * configuration located on non volatile storage
++ */
++void plat_marvell_dram_update_topology(void)
++{
++	struct mv_ddr_topology_map *tm = mv_ddr_topology_map_get();
++
++	INFO("Gathering DRAM information\n");
++
++	if (tm->cfg_src == MV_DDR_CFG_SPD) {
++		/* configure MPPs to enable i2c */
++		mpp_config();
++		/* initialize the i2c */
++		i2c_init((void *)MVEBU_CP0_I2C_BASE);
++		/* select SPD memory page 0 to access DRAM configuration */
++		i2c_write(I2C_SPD_P0_ADDR, 0x0, 1, tm->spd_data.all_bytes, 1);
++		/* read data from spd */
++		i2c_read(I2C_SPD_ADDR, 0x0, 1, tm->spd_data.all_bytes,
++			 sizeof(tm->spd_data.all_bytes));
++	}
++}
+diff --git a/plat/marvell/a8k/a80x0_cfgt/board/marvell_plat_config.c b/plat/marvell/a8k/a80x0_cfgt/board/marvell_plat_config.c
+new file mode 100644
+index 00000000..ac7b8416
+--- /dev/null
++++ b/plat/marvell/a8k/a80x0_cfgt/board/marvell_plat_config.c
+@@ -0,0 +1,199 @@
++/*
++ * Copyright (C) 2018 Marvell International Ltd.
++ *
++ * SPDX-License-Identifier:     BSD-3-Clause
++ * https://spdx.org/licenses
++ */
++
++#include <armada_common.h>
++#include <delay_timer.h>
++#include <mmio.h>
++
++/*
++ * If bootrom is currently at BLE there's no need to include the memory
++ * maps structure at this point
++ */
++#include <mvebu_def.h>
++#ifndef IMAGE_BLE
++
++/*****************************************************************************
++ * GPIO Configuration
++ *****************************************************************************
++ */
++#define MPP_CONTROL_REGISTER		0xf2440018
++#define MPP_CONTROL_MPP_SEL_51_52_MASK	0xff000
++#define GPIO_DATA_OUT1_REGISTER		0xf2440140
++#define GPIO_DATA_OUT_EN_CTRL1_REGISTER 0xf2440144
++#define GPIO_51_52_MASK			0x180000
++
++/* Reset both PCIe via GPIO number 51 and 52 */
++int marvell_gpio_config(void)
++{
++	uint32_t reg;
++
++	reg = mmio_read_32(MPP_CONTROL_REGISTER);
++	reg |= MPP_CONTROL_MPP_SEL_51_52_MASK;
++	mmio_write_32(MPP_CONTROL_REGISTER, reg);
++
++	reg = mmio_read_32(GPIO_DATA_OUT1_REGISTER);
++	reg |= GPIO_51_52_MASK;
++	mmio_write_32(GPIO_DATA_OUT1_REGISTER, reg);
++
++	reg = mmio_read_32(GPIO_DATA_OUT_EN_CTRL1_REGISTER);
++	reg &= ~GPIO_51_52_MASK;
++	mmio_write_32(GPIO_DATA_OUT_EN_CTRL1_REGISTER, reg);
++	udelay(100);
++
++	return 0;
++}
++
++/*****************************************************************************
++ * AMB Configuration
++ *****************************************************************************
++ */
++struct addr_map_win amb_memory_map[] = {
++	/* CP1 SPI1 CS0 Direct Mode access */
++	{0xf900,	0x1000000,	AMB_SPI1_CS0_ID},
++};
++
++int marvell_get_amb_memory_map(struct addr_map_win **win, uint32_t *size,
++			       uintptr_t base)
++{
++	*win = amb_memory_map;
++	if (*win == NULL)
++		*size = 0;
++	else
++		*size = ARRAY_SIZE(amb_memory_map);
++
++	return 0;
++}
++#endif
++
++/*****************************************************************************
++ * IO WIN Configuration
++ *****************************************************************************
++ */
++struct addr_map_win io_win_memory_map[] = {
++	/* CP1 (MCI0) internal regs */
++	{0x00000000f4000000,		0x2000000,  MCI_0_TID},
++#ifndef IMAGE_BLE
++	/* PCIe0 and SPI1_CS0 (RUNIT) on CP1*/
++	{0x00000000f9000000,		0x2000000,  MCI_0_TID},
++	/* PCIe1 on CP1*/
++	{0x00000000fb000000,		0x1000000,  MCI_0_TID},
++	/* PCIe2 on CP1*/
++	{0x00000000fc000000,		0x1000000,  MCI_0_TID},
++	/* MCI 0 indirect window */
++	{MVEBU_MCI_REG_BASE_REMAP(0),	0x100000,   MCI_0_TID},
++	/* MCI 1 indirect window */
++	{MVEBU_MCI_REG_BASE_REMAP(1),	0x100000,   MCI_1_TID},
++#endif
++};
++
++uint32_t marvell_get_io_win_gcr_target(int ap_index)
++{
++	return PIDI_TID;
++}
++
++int marvell_get_io_win_memory_map(int ap_index, struct addr_map_win **win,
++				  uint32_t *size)
++{
++	*win = io_win_memory_map;
++	if (*win == NULL)
++		*size = 0;
++	else
++		*size = ARRAY_SIZE(io_win_memory_map);
++
++	return 0;
++}
++
++#ifndef IMAGE_BLE
++/*****************************************************************************
++ * IOB Configuration
++ *****************************************************************************
++ */
++struct addr_map_win iob_memory_map_cp0[] = {
++	/* CP0 */
++	/* PEX1_X1 window */
++	{0x00000000f7000000,	0x1000000,		PEX1_TID},
++	/* PEX2_X1 window */
++	{0x00000000f8000000,	0x1000000,		PEX2_TID},
++	/* PEX0_X4 window */
++	{0x00000000f6000000,	0x1000000,		PEX0_TID},
++	{0x00000000c0000000,	0x20000000,		PEX0_TID},
++	{PCIE_ECAM_BASE,	PCIE_ECAM_BUS0_SIZE,	PEX0_TID},
++	{PCIE_ECAM_BUS1_BASE,	PCIE_ECAM_BUS1_SIZE,	PEX0_TID},
++	{0x0000000800000000,	0x100000000,		PEX0_TID},
++};
++
++struct addr_map_win iob_memory_map_cp1[] = {
++	/* CP1 */
++	/* SPI1_CS0 (RUNIT) window */
++	{0x00000000f9000000,	0x1000000,	RUNIT_TID},
++	/* PEX1_X1 window */
++	{0x00000000fb000000,	0x1000000,	PEX1_TID},
++	/* PEX2_X1 window */
++	{0x00000000fc000000,	0x1000000,	PEX2_TID},
++	/* PEX0_X4 window */
++	{0x00000000fa000000,	0x1000000,	PEX0_TID}
++};
++
++int marvell_get_iob_memory_map(struct addr_map_win **win, uint32_t *size,
++			       uintptr_t base)
++{
++	switch (base) {
++	case MVEBU_CP_REGS_BASE(0):
++		*win = iob_memory_map_cp0;
++		*size = ARRAY_SIZE(iob_memory_map_cp0);
++		return 0;
++	case MVEBU_CP_REGS_BASE(1):
++		*win = iob_memory_map_cp1;
++		*size = ARRAY_SIZE(iob_memory_map_cp1);
++		return 0;
++	default:
++		*size = 0;
++		*win = 0;
++		return 1;
++	}
++}
++#endif
++
++/*****************************************************************************
++ * CCU Configuration
++ *****************************************************************************
++ */
++struct addr_map_win ccu_memory_map[] = {
++#ifdef IMAGE_BLE
++	{0x00000000f2000000,	0x4000000,  IO_0_TID}, /* IO window */
++#else
++	{0x00000000f2000000,	0xe000000,  IO_0_TID}, /* IO window */
++	{0x00000000c0000000,	0x30000000,  IO_0_TID}, /* IO window */
++	{0x0000000800000000,	0x100000000,  IO_0_TID}, /* IO window */
++#endif
++};
++
++uint32_t marvell_get_ccu_gcr_target(int ap)
++{
++	return DRAM_0_TID;
++}
++
++int marvell_get_ccu_memory_map(int ap_index, struct addr_map_win **win,
++			       uint32_t *size)
++{
++	*win = ccu_memory_map;
++	*size = ARRAY_SIZE(ccu_memory_map);
++
++	return 0;
++}
++
++/* In reference to #ifndef IMAGE_BLE, this part is used for BLE only. */
++
++/*****************************************************************************
++ * SKIP IMAGE Configuration
++ *****************************************************************************
++ */
++void *plat_marvell_get_skip_image_data(void)
++{
++	/* No recovery button on A8k-MCBIN board */
++	return NULL;
++}
+diff --git a/plat/marvell/a8k/a80x0_cfgt/mvebu_def.h b/plat/marvell/a8k/a80x0_cfgt/mvebu_def.h
+new file mode 100644
+index 00000000..5bff12ce
+--- /dev/null
++++ b/plat/marvell/a8k/a80x0_cfgt/mvebu_def.h
+@@ -0,0 +1,17 @@
++/*
++ * Copyright (C) 2018 Marvell International Ltd.
++ *
++ * SPDX-License-Identifier:     BSD-3-Clause
++ * https://spdx.org/licenses
++ */
++
++#ifndef __MVEBU_DEF_H__
++#define __MVEBU_DEF_H__
++
++#include <a8k_plat_def.h>
++
++#define CP_COUNT		2	/* A80x0 has both CP0 & CP1 */
++#define I2C_SPD_ADDR		0x53	/* Access SPD data */
++#define I2C_SPD_P0_ADDR		0x36	/* Select SPD data page 0 */
++
++#endif /* __MVEBU_DEF_H__ */
+diff --git a/plat/marvell/a8k/a80x0_cfgt/platform.mk b/plat/marvell/a8k/a80x0_cfgt/platform.mk
+new file mode 100644
+index 00000000..d2f29ce2
+--- /dev/null
++++ b/plat/marvell/a8k/a80x0_cfgt/platform.mk
+@@ -0,0 +1,21 @@
++#
++# Copyright (C) 2018 Marvell International Ltd.
++#
++# SPDX-License-Identifier:     BSD-3-Clause
++# https://spdx.org/licenses
++#
++
++PCI_EP_SUPPORT		:= 0
++
++CP_NUM			:= 2
++$(eval $(call add_define,CP_NUM))
++
++DOIMAGE_SEC     	:=	tools/doimage/secure/sec_img_8K.cfg
++
++MARVELL_MOCHI_DRV	:=	drivers/marvell/mochi/apn806_setup.c
++
++BL31_LIBS		:=	plat/marvell/common/bl31_lib/mv_lib_ext.a
++
++include plat/marvell/a8k/common/a8k_common.mk
++
++include plat/marvell/common/marvell_common.mk
